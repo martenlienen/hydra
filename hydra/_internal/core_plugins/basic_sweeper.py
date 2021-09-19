@@ -27,7 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from hydra.core.config_store import ConfigStore
 from hydra.core.override_parser.overrides_parser import OverridesParser
-from hydra.core.override_parser.types import Override
+from hydra.core.override_parser.types import Override, Transformer
 from hydra.core.utils import JobReturn
 from hydra.errors import HydraException
 from hydra.plugins.launcher import Launcher
@@ -101,10 +101,11 @@ class BasicSweeper(Sweeper):
 
     @staticmethod
     def split_arguments(
-        overrides: List[Override], max_batch_size: Optional[int]
+        overrides: List[Override], max_batch_size: Optional[int], lists: List = None
     ) -> List[List[List[str]]]:
 
-        lists = []
+        if lists is None:
+            lists = []
         for override in overrides:
             if override.is_sweep_override():
                 if override.is_discrete_sweep():
@@ -137,13 +138,23 @@ class BasicSweeper(Sweeper):
         assert self.hydra_context is not None
 
         parser = OverridesParser.create(config_loader=self.hydra_context.config_loader)
-        configured_arguments = [
-            f"{key}={val}" for key, val in self.configured_overrides.items()
+        configured_str_overrides = [
+            f"{key}={val}"
+            for key, val in self.configured_overrides.items()
+            if isinstance(val, str)
         ]
-        override_exprs = configured_arguments + arguments
+        override_exprs = configured_str_overrides + arguments
         overrides = parser.parse_overrides(override_exprs)
 
-        self.overrides = self.split_arguments(overrides, self.max_batch_size)
+        configured_choice_overrides = [
+            [f"{key}={Transformer.str(val)}" for val in choices]
+            for key, choices in self.configured_overrides.items()
+            if not isinstance(choices, str)
+        ]
+
+        self.overrides = self.split_arguments(
+            overrides, self.max_batch_size, lists=configured_choice_overrides
+        )
         returns: List[Sequence[JobReturn]] = []
 
         # Save sweep run config in top level sweep working directory
